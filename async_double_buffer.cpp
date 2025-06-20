@@ -4,6 +4,32 @@
 #include <thread>
 #include <iostream>
 #include <cstdlib>
+#include <cstring>
+#include <string>
+
+std::string get_active_provider() {
+    const char* env = std::getenv("MSMPI_NETWORK_PROVIDER");
+    if (env && *env) {
+        return env;
+    }
+    char ver[MPI_MAX_LIBRARY_VERSION_STRING];
+    int len = 0;
+    if (MPI_Get_library_version(ver, &len) == MPI_SUCCESS) {
+        std::string info(ver, len);
+        if (info.find("Network Direct") != std::string::npos) {
+            return "Network Direct";
+        }
+        if (info.find("Sock") != std::string::npos ||
+            info.find("TCP") != std::string::npos) {
+            return "Sockets";
+        }
+        if (info.find("Shared Memory") != std::string::npos ||
+            info.find("shm") != std::string::npos) {
+            return "Shared Memory";
+        }
+    }
+    return "Unknown";
+}
 
 int main(int argc, char** argv) {
     MPI_Init(&argc, &argv);
@@ -22,6 +48,9 @@ int main(int argc, char** argv) {
         std::cout << "Rank " << rank << " " << var << "="
                   << (val ? val : "(unset)") << std::endl;
     }
+
+    std::cout << "Rank " << rank << " provider=" << get_active_provider()
+              << std::endl;
 
     if (size < 2) {
         if (rank == 0) {
