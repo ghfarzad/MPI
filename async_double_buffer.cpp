@@ -3,6 +3,7 @@
 #include <chrono>
 #include <thread>
 #include <iostream>
+#include <cstdlib>
 
 int main(int argc, char** argv) {
     MPI_Init(&argc, &argv);
@@ -10,6 +11,17 @@ int main(int argc, char** argv) {
     int rank, size;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
+
+    const char* env_vars[] = {
+        "MSMPI_SHM_EAGER_LIMIT",
+        "MSMPI_ND_EAGER_LIMIT",
+        "MSMPI_SOCKET_EAGER_LIMIT"
+    };
+    for (const char* var : env_vars) {
+        const char* val = std::getenv(var);
+        std::cout << "Rank " << rank << " " << var << "="
+                  << (val ? val : "(unset)") << std::endl;
+    }
 
     if (size < 2) {
         if (rank == 0) {
