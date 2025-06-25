@@ -63,36 +63,56 @@ int main(int argc, char** argv) {
     const int sender = 0;
     const int receiver = 1;
     const std::size_t BUF_SIZE = 1024 * 1024; // 1MB
+    const std::size_t FRAG_SIZE = 4 * 1024;   // 4KB fragments
+    const int NUM_FRAGS = (BUF_SIZE + FRAG_SIZE - 1) / FRAG_SIZE;
     const int NUM_ITERS = 10;
 
     std::vector<char> buffer[2];
     buffer[0].resize(BUF_SIZE);
     buffer[1].resize(BUF_SIZE);
 
-    MPI_Request req[2] = {MPI_REQUEST_NULL, MPI_REQUEST_NULL};
+    MPI_Request req[2][NUM_FRAGS];
+    for (int b = 0; b < 2; ++b) {
+        for (int f = 0; f < NUM_FRAGS; ++f) {
+            req[b][f] = MPI_REQUEST_NULL;
+        }
+    }
 
     if (rank == sender) {
         for (int i = 0; i < NUM_ITERS; ++i) {
             int idx = i % 2;
             // Wait for previous send on this buffer to complete
-            if (req[idx] != MPI_REQUEST_NULL) {
-                MPI_Wait(&req[idx], MPI_STATUS_IGNORE);
-            }
+            MPI_Waitall(NUM_FRAGS, req[idx], MPI_STATUSES_IGNORE);
+
             // Fill buffer with data
             std::fill(buffer[idx].begin(), buffer[idx].end(), static_cast<char>('A' + (i % 26)));
-            // Asynchronous send
-            MPI_Isend(buffer[idx].data(), BUF_SIZE, MPI_CHAR, receiver, 0, MPI_COMM_WORLD, &req[idx]);
+
+            int base_tag = i * NUM_FRAGS;
+            for (int f = 0; f < NUM_FRAGS; ++f) {
+                std::size_t offset = static_cast<std::size_t>(f) * FRAG_SIZE;
+                std::size_t chunk = std::min(FRAG_SIZE, BUF_SIZE - offset);
+                MPI_Isend(buffer[idx].data() + offset, chunk, MPI_CHAR, receiver, base_tag + f,
+                          MPI_COMM_WORLD, &req[idx][f]);
+            }
+
             // Simulate work by sleeping 200ms
             std::this_thread::sleep_for(std::chrono::milliseconds(200));
         }
         // Ensure all sends complete
-        MPI_Waitall(2, req, MPI_STATUSES_IGNORE);
+        MPI_Waitall(NUM_FRAGS, req[(NUM_ITERS - 1) % 2], MPI_STATUSES_IGNORE);
     } else if (rank == receiver) {
         for (int i = 0; i < NUM_ITERS; ++i) {
             int idx = i % 2;
-            MPI_Irecv(buffer[idx].data(), BUF_SIZE, MPI_CHAR, sender, 0, MPI_COMM_WORLD, &req[idx]);
-            // Wait for current receive to finish
-            MPI_Wait(&req[idx], MPI_STATUS_IGNORE);
+            int base_tag = i * NUM_FRAGS;
+            for (int f = 0; f < NUM_FRAGS; ++f) {
+                std::size_t offset = static_cast<std::size_t>(f) * FRAG_SIZE;
+                std::size_t chunk = std::min(FRAG_SIZE, BUF_SIZE - offset);
+                MPI_Irecv(buffer[idx].data() + offset, chunk, MPI_CHAR, sender, base_tag + f,
+                          MPI_COMM_WORLD, &req[idx][f]);
+            }
+
+            MPI_Waitall(NUM_FRAGS, req[idx], MPI_STATUSES_IGNORE);
+
             // Process data (here we just print the first byte)
             std::cout << "Received iteration " << i << ", first byte: " << buffer[idx][0] << std::endl;
         }
